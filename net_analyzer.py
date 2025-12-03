@@ -4,6 +4,7 @@ import plotly.express as px
 from scapy.all import sniff, IP, TCP, UDP, ARP
 import threading
 import time
+import random
 from collections import deque
 
 # --- CONFIGURATION ---
@@ -20,8 +21,13 @@ def get_shared_buffer():
 def get_sniffer_status():
     return {"running": False}
 
+@st.cache_resource
+def get_simulation_status():
+    return {"running": False}
+
 shared_buffer = get_shared_buffer()
 sniffer_status = get_sniffer_status()
+simulation_status = get_simulation_status()
 
 # --- SESSION STATE ---
 if 'display_data' not in st.session_state:
@@ -54,7 +60,23 @@ def process_packet(packet):
 
 def start_sniffing():
     # Remove 'iface' argument to let Scapy auto-detect the best interface
-    sniff(prn=process_packet, store=False, iface="en0")
+    sniff(prn=process_packet, store=False)
+
+def generate_fake_traffic():
+    while simulation_status["running"]:
+        time.sleep(random.uniform(0.5, 1.5))
+        src_ip = f"192.168.1.{random.randint(1, 255)}"
+        dst_ip = f"10.0.0.{random.randint(1, 255)}"
+        protocol = random.choice(["TCP", "UDP", "ICMP"])
+        
+        packet_info = {
+            "Time": time.strftime("%H:%M:%S"),
+            "Source": src_ip,
+            "Destination": dst_ip,
+            "Protocol": protocol,
+            "Length": random.randint(64, 1500)
+        }
+        shared_buffer.append(packet_info)
 
 # --- FRONTEND: DASHBOARD ---
 st.title("🛡️ Network Traffic Analyzer")
@@ -65,8 +87,28 @@ with col1:
     if st.button('Start Sniffing'):
         if not sniffer_status["running"]:
             sniffer_status["running"] = True
+            simulation_status["running"] = False # Stop simulation if real sniffing starts
             t = threading.Thread(target=start_sniffing, daemon=True)
             t.start()
+            st.rerun()
+
+    if st.button('Stop Sniffing'):
+        sniffer_status["running"] = False
+        simulation_status["running"] = False
+        st.rerun()
+
+with col2:
+    # Simulation Control
+    if st.checkbox("Simulate Traffic (Demo Mode)", value=simulation_status["running"]):
+        if not simulation_status["running"]:
+            simulation_status["running"] = True
+            sniffer_status["running"] = False # Stop real sniffing if simulation starts
+            t = threading.Thread(target=generate_fake_traffic, daemon=True)
+            t.start()
+            st.rerun()
+    else:
+        if simulation_status["running"]:
+            simulation_status["running"] = False
             st.rerun()
 
 # Data Sync (Move from Buffer to Display)
@@ -79,6 +121,10 @@ if sniffer_status["running"]:
     st.success(f"🟢 Sniffer Running... Captured {len(st.session_state.display_data)} packets")
     time.sleep(1) 
     st.rerun() # Keep refreshing to pull new data
+elif simulation_status["running"]:
+    st.info(f"🧪 Simulation Running... Generated {len(st.session_state.display_data)} packets")
+    time.sleep(1)
+    st.rerun()
 else:
     st.warning("🔴 Sniffer Stopped")
 
